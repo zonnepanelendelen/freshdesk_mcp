@@ -193,6 +193,37 @@ npx -y @smithery/cli install @effytech/freshdesk_mcp --client claude
 - Replace `YOUR_FRESHDESK_API_KEY` with your actual Freshdesk API key
 - Replace `YOUR_FRESHDESK_DOMAIN` with your Freshdesk domain (e.g., `yourcompany.freshdesk.com`)
 
+### Restricting Tools (read-only / non-destructive modes)
+
+By default every tool is available. Two optional environment variables let you
+restrict what the server exposes. Restricted tools are not registered at all, so
+the AI model never sees them.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `FRESHDESK_DISABLE_DESTRUCTIVE` | `false` | Disables only the irreversible **delete** tools (`delete_ticket`, `delete_ticket_summary`). Reads, creates, and updates stay available. |
+| `FRESHDESK_READ_ONLY` | `false` | Disables **all** mutating tools (create/update/delete) and the write-oriented prompts (`create_ticket`, `create_reply`). Only read tools remain. Implies `FRESHDESK_DISABLE_DESTRUCTIVE`. |
+
+Accepted truthy values (case-insensitive): `1`, `true`, `yes`, `on`. Anything else is treated as `false`.
+
+Example — allow updates but block deletes:
+
+```json
+"mcpServers": {
+  "freshdesk-mcp": {
+    "command": "uvx",
+    "args": [
+        "freshdesk-mcp"
+    ],
+    "env": {
+      "FRESHDESK_API_KEY": "<YOUR_FRESHDESK_API_KEY>",
+      "FRESHDESK_DOMAIN": "<YOUR_FRESHDESK_DOMAIN>",
+      "FRESHDESK_DISABLE_DESTRUCTIVE": "true"
+    }
+  }
+}
+```
+
 ## Example Operations
 
 Once configured, you can ask Claude to perform operations like:

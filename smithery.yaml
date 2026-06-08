@@ -15,6 +15,14 @@ startCommand:
       freshdeskDomain:
         type: string
         description: Freshdesk domain (e.g., yourcompany.freshdesk.com)
+      readOnly:
+        type: boolean
+        default: false
+        description: When true, only read tools are exposed; all create/update/delete tools are disabled.
+      disableDestructive:
+        type: boolean
+        default: false
+        description: When true, destructive delete tools (delete_ticket, delete_ticket_summary) are disabled. Creates and updates remain available.
   commandFunction:
     # A JS function that produces the CLI command based on the given config to start the MCP on stdio.
     |-
@@ -23,9 +31,13 @@ startCommand:
       args: [],
       env: {
         FRESHDESK_API_KEY: config.freshdeskApiKey,
-        FRESHDESK_DOMAIN: config.freshdeskDomain
+        FRESHDESK_DOMAIN: config.freshdeskDomain,
+        FRESHDESK_READ_ONLY: String(config.readOnly ?? false),
+        FRESHDESK_DISABLE_DESTRUCTIVE: String(config.disableDestructive ?? false)
       }
     })
   exampleConfig:
     freshdeskApiKey: YOUR_FAKE_FRESHDESK_API_KEY
     freshdeskDomain: yourcompany.freshdesk.com
+    readOnly: false
+    disableDestructive: false
