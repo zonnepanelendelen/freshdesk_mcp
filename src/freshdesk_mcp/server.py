@@ -18,6 +18,64 @@ FRESHDESK_API_KEY = os.getenv("FRESHDESK_API_KEY")
 FRESHDESK_DOMAIN = os.getenv("FRESHDESK_DOMAIN")
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Parse a boolean environment variable.
+
+    Truthy values are "1", "true", "yes", "on" (case-insensitive). Anything
+    else (including unset) falls back to ``default``.
+    """
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Read-only mode disables every tool that mutates Freshdesk data
+# (create/update/delete). Only read tools stay registered.
+FRESHDESK_READ_ONLY = _env_flag("FRESHDESK_READ_ONLY")
+
+# Gate irreversible delete operations on their own. Read-only mode implies
+# destructive actions are off, regardless of this flag.
+FRESHDESK_DISABLE_DESTRUCTIVE = _env_flag("FRESHDESK_DISABLE_DESTRUCTIVE")
+
+
+def write_tool(*args, **kwargs):
+    """Register a mutating (create/update) tool unless read-only mode is on.
+
+    When disabled, the function is returned unregistered so it never appears
+    in the MCP tool list (the model cannot call what it cannot see).
+    """
+    def decorator(func):
+        if FRESHDESK_READ_ONLY:
+            logging.info("Read-only mode: skipping write tool '%s'", func.__name__)
+            return func
+        return mcp.tool(*args, **kwargs)(func)
+    return decorator
+
+
+def destructive_tool(*args, **kwargs):
+    """Register a destructive (delete) tool unless it has been disabled.
+
+    Disabled when either read-only mode or FRESHDESK_DISABLE_DESTRUCTIVE is on.
+    """
+    def decorator(func):
+        if FRESHDESK_READ_ONLY or FRESHDESK_DISABLE_DESTRUCTIVE:
+            logging.info("Destructive actions disabled: skipping tool '%s'", func.__name__)
+            return func
+        return mcp.tool(*args, **kwargs)(func)
+    return decorator
+
+
+def write_prompt(*args, **kwargs):
+    """Register a prompt that guides a mutating action unless read-only mode is on."""
+    def decorator(func):
+        if FRESHDESK_READ_ONLY:
+            logging.info("Read-only mode: skipping write prompt '%s'", func.__name__)
+            return func
+        return mcp.prompt(*args, **kwargs)(func)
+    return decorator
+
+
 def parse_link_header(link_header: str) -> Dict[str, Optional[int]]:
     """Parse the Link header to extract pagination information.
 
@@ -221,7 +279,7 @@ async def get_tickets(page: Optional[int] = 1, per_page: Optional[int] = 30) -> 
         except Exception as e:
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-@mcp.tool()
+@write_tool()
 async def create_ticket(
     subject: str,
     description: str,
@@ -302,7 +360,7 @@ async def create_ticket(
         except Exception as e:
             return f"Error: An unexpected error occurred - {str(e)}"
 
-@mcp.tool()
+@write_tool()
 async def update_ticket(ticket_id: int, ticket_fields: Dict[str, Any]) -> Dict[str, Any]:
     """Update a ticket in Freshdesk."""
     if not ticket_fields:
@@ -357,7 +415,7 @@ async def update_ticket(ticket_id: int, ticket_fields: Dict[str, Any]) -> Dict[s
                 "error": f"An unexpected error occurred: {str(e)}"
             }
 
-@mcp.tool()
+@destructive_tool()
 async def delete_ticket(ticket_id: int) -> str:
     """Delete a ticket in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets/{ticket_id}"
@@ -403,7 +461,7 @@ async def get_ticket_conversation(ticket_id: int)-> list[Dict[str, Any]]:
         response = await client.get(url, headers=headers)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def create_ticket_reply(ticket_id: int,body: str)-> Dict[str, Any]:
     """Create a reply to a ticket in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets/{ticket_id}/reply"
@@ -417,7 +475,7 @@ async def create_ticket_reply(ticket_id: int,body: str)-> Dict[str, Any]:
         response = await client.post(url, headers=headers, json=data)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def create_ticket_note(ticket_id: int,body: str)-> Dict[str, Any]:
     """Create a note for a ticket in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets/{ticket_id}/notes"
@@ -431,7 +489,7 @@ async def create_ticket_note(ticket_id: int,body: str)-> Dict[str, Any]:
         response = await client.post(url, headers=headers, json=data)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def update_ticket_conversation(conversation_id: int,body: str)-> Dict[str, Any]:
     """Update a conversation for a ticket in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/conversations/{conversation_id}"
@@ -508,7 +566,7 @@ async def search_contacts(query: str)-> list[Dict[str, Any]]:
         response = await client.get(url, headers=headers, params=params)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def update_contact(contact_id: int, contact_fields: Dict[str, Any])-> Dict[str, Any]:
     """Update a contact in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/contacts/{contact_id}"
@@ -556,7 +614,7 @@ async def view_canned_response(canned_response_id: int)-> Dict[str, Any]:
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers)
         return response.json()
-@mcp.tool()
+@write_tool()
 async def create_canned_response(canned_response_fields: Dict[str, Any])-> Dict[str, Any]:
     """Create a canned response in Freshdesk."""
     # Validate input using Pydantic model
@@ -575,7 +633,7 @@ async def create_canned_response(canned_response_fields: Dict[str, Any])-> Dict[
         response = await client.post(url, headers=headers, json=canned_response_data)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def update_canned_response(canned_response_id: int, canned_response_fields: Dict[str, Any])-> Dict[str, Any]:
     """Update a canned response in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/canned_responses/{canned_response_id}"
@@ -585,7 +643,7 @@ async def update_canned_response(canned_response_id: int, canned_response_fields
     async with httpx.AsyncClient() as client:
         response = await client.put(url, headers=headers, json=canned_response_fields)
         return response.json()
-@mcp.tool()
+@write_tool()
 async def create_canned_response_folder(name: str)-> Dict[str, Any]:
     """Create a canned response folder in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/canned_response_folders"
@@ -598,7 +656,7 @@ async def create_canned_response_folder(name: str)-> Dict[str, Any]:
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, json=data)
         return response.json()
-@mcp.tool()
+@write_tool()
 async def update_canned_response_folder(folder_id: int, name: str)-> Dict[str, Any]:
     """Update a canned response folder in Freshdesk."""
     print(folder_id, name)
@@ -662,7 +720,7 @@ async def view_solution_category(category_id: int)-> Dict[str, Any]:
         response = await client.get(url, headers=headers)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def create_solution_category(category_fields: Dict[str, Any])-> Dict[str, Any]:
     """Create a solution category in Freshdesk."""
     if not category_fields.get("name"):
@@ -676,7 +734,7 @@ async def create_solution_category(category_fields: Dict[str, Any])-> Dict[str, 
         response = await client.post(url, headers=headers, json=category_fields)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def update_solution_category(category_id: int, category_fields: Dict[str, Any])-> Dict[str, Any]:
     """Update a solution category in Freshdesk."""
     if not category_fields.get("name"):
@@ -690,7 +748,7 @@ async def update_solution_category(category_id: int, category_fields: Dict[str, 
         response = await client.put(url, headers=headers, json=category_fields)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def create_solution_category_folder(category_id: int, folder_fields: Dict[str, Any])-> Dict[str, Any]:
     """Create a solution category folder in Freshdesk."""
     if not folder_fields.get("name"):
@@ -713,7 +771,7 @@ async def view_solution_category_folder(folder_id: int)-> Dict[str, Any]:
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers)
         return response.json()
-@mcp.tool()
+@write_tool()
 async def update_solution_category_folder(folder_id: int, folder_fields: Dict[str, Any])-> Dict[str, Any]:
     """Update a solution category folder in Freshdesk."""
     if not folder_fields.get("name"):
@@ -727,7 +785,7 @@ async def update_solution_category_folder(folder_id: int, folder_fields: Dict[st
         return response.json()
 
 
-@mcp.tool()
+@write_tool()
 async def create_solution_article(folder_id: int, article_fields: Dict[str, Any])-> Dict[str, Any]:
     """Create a solution article in Freshdesk."""
     if not article_fields.get("title") or not article_fields.get("status") or not article_fields.get("description"):
@@ -751,7 +809,7 @@ async def view_solution_article(article_id: int)-> Dict[str, Any]:
         response = await client.get(url, headers=headers)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def update_solution_article(article_id: int, article_fields: Dict[str, Any])-> Dict[str, Any]:
     """Update a solution article in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/solutions/articles/{article_id}"
@@ -773,7 +831,7 @@ async def view_agent(agent_id: int)-> Dict[str, Any]:
         response = await client.get(url, headers=headers)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def create_agent(agent_fields: Dict[str, Any]) -> Dict[str, Any]:
     """Create an agent in Freshdesk."""
     # Validate mandatory fields
@@ -802,7 +860,7 @@ async def create_agent(agent_fields: Dict[str, Any]) -> Dict[str, Any]:
                 "details": e.response.json() if e.response else None
             }
 
-@mcp.tool()
+@write_tool()
 async def update_agent(agent_id: int, agent_fields: Dict[str, Any]) -> Dict[str, Any]:
     """Update an agent in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/agents/{agent_id}"
@@ -838,7 +896,7 @@ async def list_groups(page: Optional[int] = 1, per_page: Optional[int] = 30)-> l
         response = await client.get(url, headers=headers, params=params)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def create_group(group_fields: Dict[str, Any]) -> Dict[str, Any]:
     """Create a group in Freshdesk."""
     # Validate input using Pydantic model
@@ -877,7 +935,7 @@ async def view_group(group_id: int) -> Dict[str, Any]:
         response = await client.get(url, headers=headers)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def create_ticket_field(ticket_field_fields: Dict[str, Any]) -> Dict[str, Any]:
     """Create a ticket field in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/admin/ticket_fields"
@@ -898,7 +956,7 @@ async def view_ticket_field(ticket_field_id: int) -> Dict[str, Any]:
         response = await client.get(url, headers=headers)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def update_ticket_field(ticket_field_id: int, ticket_field_fields: Dict[str, Any]) -> Dict[str, Any]:
     """Update a ticket field in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/admin/ticket_fields/{ticket_field_id}"
@@ -909,7 +967,7 @@ async def update_ticket_field(ticket_field_id: int, ticket_field_fields: Dict[st
         response = await client.put(url, headers=headers, json=ticket_field_fields)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def update_group(group_id: int, group_fields: Dict[str, Any]) -> Dict[str, Any]:
     """Update a group in Freshdesk."""
     try:
@@ -955,7 +1013,7 @@ async def view_contact_field(contact_field_id: int) -> Dict[str, Any]:
         response = await client.get(url, headers=headers)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def create_contact_field(contact_field_fields: Dict[str, Any]) -> Dict[str, Any]:
     """Create a contact field in Freshdesk."""
     # Validate input using Pydantic model
@@ -973,7 +1031,7 @@ async def create_contact_field(contact_field_fields: Dict[str, Any]) -> Dict[str
         response = await client.post(url, headers=headers, json=contact_field_data)
         return response.json()
 
-@mcp.tool()
+@write_tool()
 async def update_contact_field(contact_field_id: int, contact_field_fields: Dict[str, Any]) -> Dict[str, Any]:
     """Update a contact field in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/contact_fields/{contact_field_id}"
@@ -1002,7 +1060,7 @@ async def get_field_properties(field_name: str):
 
     return matched_field
 
-@mcp.prompt()
+@write_prompt()
 def create_ticket(
     subject: str,
     description: str,
@@ -1033,7 +1091,7 @@ Notes:
 Make sure to reference the correct keys from `get_field_properties()` when constructing the payload.
 """
 
-@mcp.prompt()
+@write_prompt()
 def create_reply(
     ticket_id:int,
     reply_message: str,
@@ -1199,7 +1257,7 @@ async def view_ticket_summary(ticket_id: int) -> Dict[str, Any]:
         except Exception as e:
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-@mcp.tool()
+@write_tool()
 async def update_ticket_summary(ticket_id: int, body: str) -> Dict[str, Any]:
     """Update the summary of a ticket in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets/{ticket_id}/summary"
@@ -1221,7 +1279,7 @@ async def update_ticket_summary(ticket_id: int, body: str) -> Dict[str, Any]:
         except Exception as e:
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-@mcp.tool()
+@destructive_tool()
 async def delete_ticket_summary(ticket_id: int) -> Dict[str, Any]:
     """Delete the summary of a ticket in Freshdesk."""
     url = f"https://{FRESHDESK_DOMAIN}/api/v2/tickets/{ticket_id}/summary"
