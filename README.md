@@ -206,6 +206,23 @@ the AI model never sees them.
 
 Accepted truthy values (case-insensitive): `1`, `true`, `yes`, `on`. Anything else is treated as `false`.
 
+#### Tool annotations
+
+Independently of the flags above, every registered tool advertises standard
+[MCP tool annotations](https://modelcontextprotocol.io/specification/server/tools/#annotations)
+so clients can reason about side effects (for example, surfacing read tools
+freely while confirming before mutations):
+
+| Tool group | `readOnlyHint` | `destructiveHint` |
+| --- | --- | --- |
+| Reads (`get_*`, `list_*`, `view_*`, `search_*`, `find_*`) | `true` | — |
+| Creates & updates (`create_*`, `update_*`) | `false` | `false` |
+| Deletes (`delete_*`) | `false` | `true` |
+
+All tools set `openWorldHint: true` because they call the external Freshdesk
+API. Annotations are advisory hints, not access control — use the environment
+variables above to actually withhold tools.
+
 Example — allow updates but block deletes:
 
 ```json
